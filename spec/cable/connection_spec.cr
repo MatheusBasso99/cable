@@ -217,7 +217,7 @@ describe Cable::Connection do
         connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
         sleep 100.milliseconds
         connection.receive({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "Hello"}.to_json}.to_json)
-        sleep 100.milliseconds
+        wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {message: "Hello", current_user: "98"}}.to_json)
 
         socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
         socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {message: "Hello", current_user: "98"}}.to_json)
@@ -232,7 +232,7 @@ describe Cable::Connection do
         connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
         sleep 100.milliseconds
         connection.receive({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {invite_id: "4", action: "invite"}.to_json}.to_json)
-        sleep 100.milliseconds
+        wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"performed" => "invite", "params" => "4"}}.to_json)
 
         socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
         socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"performed" => "invite", "params" => "4"}}.to_json)
@@ -264,7 +264,7 @@ describe Cable::Connection do
         connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
         sleep 100.milliseconds
         ConnectionTest.broadcast_to("chat_1", {hello: "Broadcast!"}.to_json)
-        sleep 100.milliseconds
+        wait_for_message(socket, {identifier: {channel: "ChatChannel", room: "1"}.to_json, message: {hello: "Broadcast!"}}.to_json)
 
         socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
         socket.messages.should contain({identifier: {channel: "ChatChannel", room: "1"}.to_json, message: {hello: "Broadcast!"}}.to_json)
@@ -282,7 +282,7 @@ describe Cable::Connection do
           connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           sleep 100.milliseconds
           ChatChannel.broadcast_to(channel: "chat_1", message: "<turbo-stream></turbo-stream>")
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => "<turbo-stream></turbo-stream>"}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => "<turbo-stream></turbo-stream>"}.to_json)
@@ -298,7 +298,7 @@ describe Cable::Connection do
           sleep 100.milliseconds
           json_message = %({"foo": "bar"})
           ChatChannel.broadcast_to(channel: "chat_1", message: json_message)
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => JSON.parse(%({"foo": "bar"}))}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => JSON.parse(%({"foo": "bar"}))}.to_json)
@@ -315,7 +315,7 @@ describe Cable::Connection do
           connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           sleep 100.milliseconds
           ChatChannel.broadcast_to(channel: "chat_1", message: {"foo" => "bar"})
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
@@ -333,7 +333,7 @@ describe Cable::Connection do
           sleep 100.milliseconds
           json_message = JSON.parse(%({"foo": "bar"}))
           ChatChannel.broadcast_to(channel: "chat_1", message: json_message)
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
@@ -352,7 +352,7 @@ describe Cable::Connection do
           connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           sleep 100.milliseconds
           Cable.server.publish(channel: "chat_1", message: "<turbo-stream></turbo-stream>")
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => "<turbo-stream></turbo-stream>"}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => "<turbo-stream></turbo-stream>"}.to_json)
@@ -368,7 +368,7 @@ describe Cable::Connection do
           sleep 100.milliseconds
           json_message = %({"foo": "bar"})
           Cable.server.publish(channel: "chat_1", message: json_message)
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => JSON.parse(%({"foo": "bar"}))}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => JSON.parse(%({"foo": "bar"}))}.to_json)
@@ -385,7 +385,7 @@ describe Cable::Connection do
           connection.receive({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           sleep 100.milliseconds
           Cable.server.publish(channel: "chat_1", message: %({"foo": "bar"}))
-          sleep 100.milliseconds
+          wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
 
           socket.messages.should contain({"type" => "confirm_subscription", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
           socket.messages.should contain({"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
@@ -408,7 +408,7 @@ describe Cable::Connection do
 
         json_message = JSON.parse(%({"foo": "bar"}))
         RejectionChannel.broadcast_to(channel: "rejection", message: json_message)
-        sleep 100.milliseconds
+        wait_for_message(socket, {"identifier" => {channel: "ChatChannel", room: "1"}.to_json, "message" => {"foo" => "bar"}}.to_json)
 
         # Even after broadcasting to Rejection channel, we can check the socket didn't receive it
         socket.messages.size.should eq(3)
@@ -435,12 +435,12 @@ describe Cable::Connection do
       connection_1.receive({"command" => "subscribe", "identifier" => {channel: "CallbackTransmitChannel"}.to_json}.to_json)
       sleep 100.milliseconds
       CallbackTransmitChannel.broadcast_to(channel: "callbacks_01", message: "<turbo-stream></turbo-stream>")
-      sleep 100.milliseconds
+      wait_for_message(socket_1, {"identifier" => {channel: "CallbackTransmitChannel"}.to_json, "message" => "<turbo-stream></turbo-stream>"}.to_json)
 
       connection_2.receive({"command" => "subscribe", "identifier" => {channel: "CallbackTransmitChannel"}.to_json}.to_json)
       sleep 100.milliseconds
       CallbackTransmitChannel.broadcast_to(channel: "callbacks_01", message: "<turbo-stream>2nd</turbo-stream>")
-      sleep 100.milliseconds
+      wait_until { socket_1.messages.size >= (1 + 1 + 4 + 1 + 4) && socket_2.messages.size >= (1 + 1 + 4) }
 
       # since socket_1 was connected first
       # 1 x received the subscribe command message
@@ -493,12 +493,12 @@ describe Cable::Connection do
       connection_1.receive({"command" => "subscribe", "identifier" => {channel: "CallbackConnectionTransmitChannel"}.to_json}.to_json)
       sleep 100.milliseconds
       CallbackConnectionTransmitChannel.broadcast_to(channel: "callbacks_02", message: "<turbo-stream></turbo-stream>")
-      sleep 100.milliseconds
+      wait_for_message(socket_1, {"identifier" => {channel: "CallbackConnectionTransmitChannel"}.to_json, "message" => "<turbo-stream></turbo-stream>"}.to_json)
 
       connection_2.receive({"command" => "subscribe", "identifier" => {channel: "CallbackConnectionTransmitChannel"}.to_json}.to_json)
       sleep 100.milliseconds
       CallbackConnectionTransmitChannel.broadcast_to(channel: "callbacks_02", message: "<turbo-stream>2nd</turbo-stream>")
-      sleep 100.milliseconds
+      wait_until { socket_1.messages.size >= (1 + 1 + 4 + 1) && socket_2.messages.size >= (1 + 1 + 4) }
 
       # since socket_1 was connected first
       # 1 x received the subscribe command message

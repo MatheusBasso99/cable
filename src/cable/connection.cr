@@ -97,7 +97,14 @@ module Cable
         rescue e : IO::Error
           Cable.settings.on_error.call(e, "IO::Error: #{e.message} -> #{self.class.name}#close", self)
         end
-        unsubscribe_from_internal_channel
+
+        begin
+          unsubscribe_from_internal_channel
+        rescue e : IO::Error
+          # The backend's subscribe connection may already be gone (e.g. Redis
+          # died, or the server is shutting down). Don't let it escape #close.
+          Cable.settings.on_error.call(e, "IO::Error: #{e.message} -> #{self.class.name}#close (unsubscribe_from_internal_channel)", self)
+        end
       end
 
       return true if closed?

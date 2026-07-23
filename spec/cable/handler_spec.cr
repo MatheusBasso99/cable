@@ -185,9 +185,9 @@ describe Cable::Handler do
       # App.cable.subscriptions.create({ channel: "ChatChannel", params: {room: "1"}});
       ws2.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
 
-      # wait server subscribe to channel
-      # how can we ensure it was subscribed and avoid this sleep?
-      sleep 200.milliseconds
+      # Wait until the server has registered the subscription before sending,
+      # instead of guessing with a fixed sleep.
+      wait_for_subscription("1")
 
       # App.cable.subscriptions.subscriptions[0].send({message: "test"})
       ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "test"}.to_json}.to_json)
@@ -214,8 +214,8 @@ describe Cable::Handler do
         # this way we are simulating a broadcast while the use is connected
         # before `ws2.close`
         if seq == 0
-          # this is a sleep to avoid publishing before channel hasn't subscribed
-          sleep 200.milliseconds
+          # avoid publishing before the channel has subscribed
+          wait_for_subscription("1")
           Cable.server.publish("chat_1", {"message" => "from Ruby!", "current_user" => "1"}.to_json)
         end
         str.should eq(messages[seq])
@@ -249,9 +249,8 @@ describe Cable::Handler do
       # App.cable.subscriptions.create({ channel: "ChatChannel", params: {room: "1"}});
       ws2.send({command: "subscribe", identifier: {channel: "ChatChannel", room: "1"}.to_json}.to_json)
 
-      # wait server subscribe to channel
-      # how can we ensure it was subscribed and avoid this sleep?
-      sleep 100.milliseconds
+      # Wait until the server has registered the subscription before sending.
+      wait_for_subscription("1")
 
       # App.cable.subscriptions.subscriptions[0].perform("invite", {invite_id: "3"});
       ws2.send({command: "message", identifier: {channel: "ChatChannel", room: "1"}.to_json, data: {invite_id: "3", action: "invite"}.to_json}.to_json)
@@ -298,13 +297,13 @@ describe Cable::Handler do
       # connect
       Cable.server.connections.size.should eq(0)
       ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws2")
-      Cable.server.connections.size.should eq(1)
+      wait_until { Cable.server.connections.size == 1 }
       ws3 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws3")
-      Cable.server.connections.size.should eq(2)
+      wait_until { Cable.server.connections.size == 2 }
       ws4 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws4")
-      Cable.server.connections.size.should eq(3)
+      wait_until { Cable.server.connections.size == 3 }
       _ws5 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws5")
-      Cable.server.connections.size.should eq(4)
+      wait_until { Cable.server.connections.size == 4 }
 
       connections = Cable.server.connections.keys
       connections.any?(&.starts_with?("ws2")).should eq(true)
@@ -312,10 +311,16 @@ describe Cable::Handler do
       connections.any?(&.starts_with?("ws4")).should eq(true)
       connections.any?(&.starts_with?("ws5")).should eq(true)
 
+      # Each connection streams from its OWN room. With a shared room the "test"
+      # echo of one connection could be delivered late — after the "raise" tore
+      # its socket down — to the *next* connection that had meanwhile subscribed
+      # to the same room, so a connection would sometimes receive a message with
+      # a different `current_user`. Isolating rooms makes a broadcast reach only
+      # the connection that produced it, so each block is deterministic.
       messages = [
         {type: "welcome"}.to_json,
-        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "1"}.to_json}.to_json,
-        {identifier: {channel: "ChatChannel", room: "1"}.to_json, message: {message: "test", current_user: "ws2"}}.to_json,
+        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "2"}.to_json}.to_json,
+        {identifier: {channel: "ChatChannel", room: "2"}.to_json, message: {message: "test", current_user: "ws2"}}.to_json,
       ]
       seq = 0
       ping_seq = 0
@@ -329,29 +334,29 @@ describe Cable::Handler do
         ws2.close if seq >= messages.size
       end
       # subscribe
-      ws2.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
+      ws2.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "2"}.to_json}.to_json)
 
-      sleep 200.milliseconds
+      wait_for_subscription("ws2")
 
       # send message
-      ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "test"}.to_json}.to_json)
+      ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "2"}.to_json, "data" => {message: "test"}.to_json}.to_json)
       # raise error
-      ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
+      ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "2"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
 
       ws2.run
 
-      # 1 error
+      # 1 error, and ws2 disconnected — both happen asynchronously after the
+      # raise, so wait for the state instead of asserting immediately.
+      wait_until { Cable.server.errors == 1 && Cable.server.connections.size == 3 }
       Cable.server.errors.should eq(1)
-
-      # connection 1 will be disconnected due to error
       Cable.server.connections.size.should eq(3)
       connections = Cable.server.connections.keys
       connections.any?(&.starts_with?("ws2")).should eq(false)
 
       messages = [
         {type: "welcome"}.to_json,
-        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "1"}.to_json}.to_json,
-        {identifier: {channel: "ChatChannel", room: "1"}.to_json, message: {message: "test", current_user: "ws3"}}.to_json,
+        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "3"}.to_json}.to_json,
+        {identifier: {channel: "ChatChannel", room: "3"}.to_json, message: {message: "test", current_user: "ws3"}}.to_json,
       ]
       seq = 0
       ping_seq = 0
@@ -365,29 +370,28 @@ describe Cable::Handler do
         ws3.close if seq >= messages.size
       end
       # subscribe
-      ws3.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
+      ws3.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "3"}.to_json}.to_json)
 
-      sleep 200.milliseconds
+      wait_for_subscription("ws3")
 
       # send message
-      ws3.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "test"}.to_json}.to_json)
+      ws3.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "3"}.to_json, "data" => {message: "test"}.to_json}.to_json)
       # raise error
-      ws3.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
+      ws3.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "3"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
 
       ws3.run
 
-      # 2 errors
+      # 2 errors, and ws3 disconnected
+      wait_until { Cable.server.errors == 2 && Cable.server.connections.size == 2 }
       Cable.server.errors.should eq(2)
-
-      # connection 1 will be disconnected due to error
       Cable.server.connections.size.should eq(2)
       connections = Cable.server.connections.keys
       connections.any?(&.starts_with?("ws3")).should eq(false)
 
       messages = [
         {type: "welcome"}.to_json,
-        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "1"}.to_json}.to_json,
-        {identifier: {channel: "ChatChannel", room: "1"}.to_json, message: {message: "test", current_user: "ws3"}}.to_json,
+        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "4"}.to_json}.to_json,
+        {identifier: {channel: "ChatChannel", room: "4"}.to_json, message: {message: "test", current_user: "ws4"}}.to_json,
       ]
       seq = 0
       ping_seq = 0
@@ -401,18 +405,20 @@ describe Cable::Handler do
         ws4.close if seq >= messages.size
       end
       # subscribe
-      ws4.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "1"}.to_json}.to_json)
+      ws4.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "4"}.to_json}.to_json)
 
-      sleep 200.milliseconds
+      wait_for_subscription("ws4")
 
       # send message
-      ws4.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "test"}.to_json}.to_json)
+      ws4.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "4"}.to_json, "data" => {message: "test"}.to_json}.to_json)
       # raise error
-      ws4.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "1"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
+      ws4.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "4"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
 
       ws4.run
 
-      sleep 200.milliseconds
+      # the volume of errors trips the restart: wait for it to reset instead of
+      # guessing with a fixed sleep
+      wait_until { Cable.server.errors == 0 && Cable.server.connections.empty? }
 
       # we should have 1 connectoon ws5 open
       # but since the server restarted due to volume of errors
