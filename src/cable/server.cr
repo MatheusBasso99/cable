@@ -181,7 +181,10 @@ module Cable
     end
 
     def shutdown
-      pinger.stop
+      # Don't touch the lazy getter here: on a server whose pinger was never
+      # started, `pinger.stop` would instantiate it (spawning its timer fiber)
+      # only to stop it.
+      @pinger.try(&.stop)
 
       # Close the client connections BEFORE tearing down the backend
       # connections. Each `connection.close` unsubscribes from its internal
