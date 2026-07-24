@@ -58,6 +58,18 @@ describe Cable::Server do
       end
       Cable.reset_server
     end
+
+    it "stops the backend pinger when it was started" do
+      Cable.reset_server
+      Cable.temp_config(backend_class: Cable::DevBackend) do
+        server = Cable.server
+        pinger = server.pinger
+        server.shutdown
+
+        pinger.@task.next_scheduled.should be_nil
+      end
+      Cable.reset_server
+    end
   end
 
   describe "#subscribed_channels_for" do

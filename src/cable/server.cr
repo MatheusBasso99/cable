@@ -181,22 +181,33 @@ module Cable
     end
 
     def shutdown
+      # Don't touch the lazy getter here: on a server whose pinger was never
+      # started, `pinger.stop` would instantiate it (spawning its timer fiber)
+      # only to stop it.
+      @pinger.try(&.stop)
+
+      # Close the client connections BEFORE tearing down the backend
+      # connections. Each `connection.close` unsubscribes from its internal
+      # channel through the backend's subscribe connection, so closing the
+      # backend first would make those writes fail with `IO::Error: Closed
+      # stream`.
+      connections_to_close = @connections_mutex.synchronize do
+        @connections.values.dup
+      end
+      connections_to_close.each do |connection|
+        connection.close
+      rescue e : IO::Error
+        # A dead client socket must not abort the shutdown of the remaining
+        # connections or of the backend below.
+        Cable::Logger.debug { "Cable::Server#shutdown Error closing connection: #{e.message}" }
+      end
+
       begin
         backend.close_subscribe_connection
         backend.close_publish_connection
       rescue e : IO::Error
         # the @writer IO is closed already
         Cable::Logger.debug { "Cable::Server#shutdown Connection to backend was severed: #{e.message}" }
-      end
-      # Don't touch the lazy getter here: on a server whose pinger was never
-      # started, `pinger.stop` would instantiate it (spawning its timer fiber)
-      # only to stop it.
-      @pinger.try(&.stop)
-      connections_to_close = @connections_mutex.synchronize do
-        @connections.values.dup
-      end
-      connections_to_close.each do |connection|
-        connection.close
       end
     end
 
