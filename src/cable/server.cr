@@ -188,7 +188,10 @@ module Cable
         # the @writer IO is closed already
         Cable::Logger.debug { "Cable::Server#shutdown Connection to backend was severed: #{e.message}" }
       end
-      pinger.stop
+      # Don't touch the lazy getter here: on a server whose pinger was never
+      # started, `pinger.stop` would instantiate it (spawning its timer fiber)
+      # only to stop it.
+      @pinger.try(&.stop)
       connections_to_close = @connections_mutex.synchronize do
         @connections.values.dup
       end
