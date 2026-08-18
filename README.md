@@ -134,7 +134,9 @@ See [Crystal API docs](https://crystal-lang.org/api/1.6.1/Log.html#configure-log
 Cable::Logger.setup_from_env(default_level: :warn)
 ```
 
-> NOTE: The volume of logs produced are high... If log costs are a concern, use `warn` level to only receive critical logs
+Message payloads (`Channel.broadcast_to`, `#broadcast`, `#transmit`, incoming `perform`/`receive` data and per-subscriber delivery) are logged **only at `debug`**. At the default `info` level Cable logs connection and subscription lifecycle events but never message bodies, so secrets carried in messages do not reach production logs unless you explicitly enable `debug` for the `cable` source.
+
+> NOTE: The volume of logs produced are high, and `debug` additionally includes every message body... If log costs are a concern, use `warn` level to only receive critical logs
 
 ### Setup the main application connection and channel classes
 
