@@ -203,11 +203,11 @@ module Cable
       end
       if channel
         if payload.action?
-          Cable::Logger.info { "#{channel.class}#perform(\"#{payload.action}\", #{payload.data})" }
+          Cable::Logger.debug { "#{channel.class}#perform(\"#{payload.action}\", #{payload.data})" }
           channel.perform(payload.action, payload.data)
         else
           begin
-            Cable::Logger.info { "#{channel.class}#receive(#{payload.data})" }
+            Cable::Logger.debug { "#{channel.class}#receive(#{payload.data})" }
             channel.receive(payload.data)
           rescue e : TypeCastError
             Cable.settings.on_error.call(e, "Exception: #{e.message} -> #{self.class.name}#message(payload) { #{payload.inspect} }", self)

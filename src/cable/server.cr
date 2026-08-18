@@ -143,7 +143,7 @@ module Cable
           if channel.connection.closed?
             channel.close
           else
-            Cable::Logger.info { "#{channel.class} transmitting #{parsed_message} (via streamed from #{channel.stream_identifier})" }
+            Cable::Logger.debug { "#{channel.class} transmitting #{parsed_message} (via streamed from #{channel.stream_identifier})" }
             channel.connection.socket.send({
               identifier: channel.identifier,
               message:    parsed_message,
