@@ -210,7 +210,7 @@ module Cable
             Cable::Logger.debug { "#{channel.class}#receive(#{payload.data})" }
             channel.receive(payload.data)
           rescue e : TypeCastError
-            Cable.settings.on_error.call(e, "Exception: #{e.message} -> #{self.class.name}#message(payload) { #{payload.inspect} }", self)
+            Cable.settings.on_error.call(e, "Exception: #{e.message} -> #{self.class.name}#message(payload) { #{payload.identifier.key} }", self)
           end
         end
       end

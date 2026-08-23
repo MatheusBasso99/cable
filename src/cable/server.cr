@@ -151,7 +151,7 @@ module Cable
           end
         end
       rescue e : IO::Error
-        Cable.settings.on_error.call(e, "IO::Error Exception: #{e.message}: #{parsed_message} -> Cable::Server#send_to_channels(channel, message)", nil)
+        Cable.settings.on_error.call(e, "IO::Error Exception: #{e.message} -> Cable::Server#send_to_channels(#{channel_identifier})", nil)
       end
     end
 

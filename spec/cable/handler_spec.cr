@@ -136,6 +136,8 @@ describe Cable::Handler do
       exception.message.should contain("Cable::Handler#socket.on_message")
       exception.exception.class.should eq(JSON::SerializableError)
       exception.connection.as(Cable::Connection).token.should eq("1")
+      # the raw frame must not be forwarded to error trackers
+      exception.message.should_not contain("ChatChannel")
     end
 
     it "rejected" do
