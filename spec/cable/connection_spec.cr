@@ -74,6 +74,72 @@ describe Cable::Connection do
     end
   end
 
+  describe "internal channel" do
+    it "is released when a connection that never subscribed to a channel closes" do
+      with_dev_backend do
+        connection = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+        Cable::DevBackend.subscriptions.should eq(["cable_internal/98"])
+
+        connection.close
+
+        Cable::DevBackend.subscriptions.should be_empty
+        Cable.server.@internal_channel_holders.should be_empty
+      end
+    end
+
+    it "is shared by connections with the same identifier until the last one closes" do
+      with_dev_backend do
+        first = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+        second = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+        Cable::DevBackend.subscriptions.should eq(["cable_internal/98"])
+
+        first.close
+        Cable::DevBackend.subscriptions.should eq(["cable_internal/98"])
+
+        second.close
+        Cable::DevBackend.subscriptions.should be_empty
+      end
+    end
+
+    it "is released once even when a connection is closed more than once" do
+      with_dev_backend do
+        first = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+        second = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+
+        # e.g. `Server#send_to_internal_connections` closes it, then removes it
+        first.close
+        first.close
+        Cable::DevBackend.subscriptions.should eq(["cable_internal/98"])
+
+        second.close
+        Cable::DevBackend.subscriptions.should be_empty
+      end
+    end
+
+    it "is released on the server it was taken on, even after a restart" do
+      with_dev_backend do
+        old_connection = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+        Cable.restart
+        new_connection = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+
+        old_connection.close
+        Cable.server.@internal_channel_holders.should eq({"98" => 1})
+
+        new_connection.close
+        Cable.server.@internal_channel_holders.should be_empty
+      end
+    end
+
+    it "is not held by a connection without an identifier" do
+      with_dev_backend do
+        connection = ConnectionTest.new(builds_request(token: nil), DummySocket.new(IO::Memory.new))
+        Cable::DevBackend.subscriptions.should be_empty
+        connection.close
+        Cable.server.@internal_channel_holders.should be_empty
+      end
+    end
+  end
+
   describe "#receive" do
     it "ignores empty messages" do
       connect do |connection, socket|
@@ -246,6 +312,10 @@ describe Cable::Connection do
           report.exception.is_a?(IO::Error) &&
             report.message.includes?("ConnectionTest#initialize")
         end.should be_true
+
+        # The failed subscribe does not leave a hold behind.
+        Cable.server.@internal_channel_holders.should be_empty
+        connection.close
       end
       Cable.reset_server
     end
@@ -664,6 +734,15 @@ private class FailingSubscribeBackend < Cable::DevBackend
   def subscribe(stream_identifier : String)
     raise IO::Error.new("Broken pipe")
   end
+end
+
+private def with_dev_backend(&)
+  Cable.reset_server
+  Cable.temp_config(backend_class: Cable::DevBackend) do
+    yield
+  end
+ensure
+  Cable.reset_server
 end
 
 def connect(connection_class : Cable::Connection.class = ConnectionTest, token : String? = "98", &)

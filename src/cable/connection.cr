@@ -13,6 +13,12 @@ module Cable
     CHANNELS       = {} of String => Hash(String, Cable::Channel)
     CHANNELS_MUTEX = Mutex.new
 
+    # The server and identifier this connection subscribed the internal channel
+    # with, so `#close` releases exactly that hold, once, even after a
+    # `Cable.restart` replaced `Cable.server`.
+    @internal_channel_hold : {Cable::Server, String}?
+    @internal_channel_mutex = Mutex.new
+
     def identifier
       internal_identifier
     end
@@ -95,14 +101,17 @@ module Cable
         rescue e : IO::Error
           Cable.settings.on_error.call(e, "IO::Error: #{e.message} -> #{self.class.name}#close", self)
         end
+      end
 
-        begin
-          unsubscribe_from_internal_channel
-        rescue e : IO::Error
-          # The backend's subscribe connection may already be gone (e.g. Redis
-          # died, or the server is shutting down). Don't let it escape #close.
-          Cable.settings.on_error.call(e, "IO::Error: #{e.message} -> #{self.class.name}#close (unsubscribe_from_internal_channel)", self)
-        end
+      # Every connection holds its internal channel from `#initialize` on,
+      # whether or not it ever subscribed to a channel, so release it here
+      # unconditionally.
+      begin
+        unsubscribe_from_internal_channel
+      rescue e : IO::Error
+        # The backend's subscribe connection may already be gone (e.g. Redis
+        # died, or the server is shutting down). Don't let it escape #close.
+        Cable.settings.on_error.call(e, "IO::Error: #{e.message} -> #{self.class.name}#close (unsubscribe_from_internal_channel)", self)
       end
 
       return true if closed?
@@ -218,24 +227,28 @@ module Cable
       Cable.server.publish(channel, message)
     end
 
-    private def internal_channel
-      "cable_internal/#{internal_identifier}"
-    end
-
     private def subscribe_to_internal_channel
       return if connection_rejected? || closed?
 
       # If there's no internal identifier, then we have no way
       # to disconnect remotely, so avoid subscribing
-      if internal_identifier.presence
-        Cable.server.backend.subscribe(internal_channel)
-      end
+      return unless identifier = internal_identifier.presence
+
+      server = Cable.server
+      server.subscribe_internal_channel(identifier)
+      @internal_channel_mutex.synchronize { @internal_channel_hold = {server, identifier} }
     end
 
     private def unsubscribe_from_internal_channel
-      if internal_identifier.presence
-        Cable.server.backend.unsubscribe(internal_channel)
+      hold = @internal_channel_mutex.synchronize do
+        taken = @internal_channel_hold
+        @internal_channel_hold = nil
+        taken
       end
+      return unless hold
+
+      server, identifier = hold
+      server.unsubscribe_internal_channel(identifier)
     end
   end
 end
