@@ -229,6 +229,7 @@ module Cable
 
     private def subscribe_to_internal_channel
       return if connection_rejected? || closed?
+      return unless Cable.settings.accept_remote_disconnects
 
       # If there's no internal identifier, then we have no way
       # to disconnect remotely, so avoid subscribing

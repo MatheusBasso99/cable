@@ -99,6 +99,7 @@ Cable.configure do |settings|
   settings.url = ENV.fetch("CABLE_BACKEND_URL", "redis://localhost:6379")
   settings.backend_class = Cable::RedisBackend
   settings.backend_ping_interval = 15.seconds
+  settings.accept_remote_disconnects = true # false if you never call remote_connections.find(...).disconnect
   settings.restart_error_allowance = 20 # backend pinger failures before Cable.restart
   settings.on_error = ->(error : Exception, message : String, connection : Cable::Connection?) do
     # or whichever error reportings you're using

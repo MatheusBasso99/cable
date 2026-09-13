@@ -130,6 +130,19 @@ describe Cable::Connection do
       end
     end
 
+    it "is not subscribed at all when remote disconnects are not accepted" do
+      with_dev_backend do
+        Cable.temp_config(accept_remote_disconnects: false) do
+          connection = ConnectionTest.new(builds_request(token: "98"), DummySocket.new(IO::Memory.new))
+          Cable::DevBackend.subscriptions.should be_empty
+          Cable.server.@internal_channel_holders.should be_empty
+
+          connection.close
+          Cable::DevBackend.subscriptions.should be_empty
+        end
+      end
+    end
+
     it "is not held by a connection without an identifier" do
       with_dev_backend do
         connection = ConnectionTest.new(builds_request(token: nil), DummySocket.new(IO::Memory.new))

@@ -14,6 +14,7 @@ module Cable
     # NOTE: This code may run on a different machine than where the `@server.connections`
     # is actually sitting in memory. For this reason, we just pass the value right through
     # the backend (i.e. redis), and let that broadcast out to all running instances.
+    # Only nodes with `accept_remote_disconnects` on (the default) act on it.
     def find(identifier : String) : RemoteConnection
       RemoteConnection.new(@server, identifier)
     end
