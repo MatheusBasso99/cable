@@ -63,9 +63,9 @@ module Cable
           ws_pinger.stop
           socket.close(HTTP::WebSocket::CloseCode::InternalServerError, "Internal Server Error")
           Cable.server.remove_connection(connection_id)
-          # handle restart
-          Cable.server.count_error!
-          Cable.restart if Cable.server.restart?
+          # An exception raised handling one client's message (channel code,
+          # usually) says nothing about the backend, so it does not count
+          # toward `Cable.restart`, which would drop every socket on the node.
           Cable.settings.on_error.call(e, "Cable::Handler#socket.on_message (frame of #{message.bytesize} bytes)", connection)
         end
 

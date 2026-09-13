@@ -343,145 +343,44 @@ describe Cable::Handler do
       io_with_context.to_s.should contain("404 Not Found")
     end
 
-    it "restarts the server if too many errors" do
+    it "keeps the server running when channel code raises" do
       address_chan = start_server
       listen_address = address_chan.receive
+      server = Cable.server
 
-      # no errors
-      Cable.server.errors.should eq(0)
-
-      # connect
-      Cable.server.connections.size.should eq(0)
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws2"))
+      bystander = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("bystander"))
       wait_until { Cable.server.connections.size == 1 }
-      ws3 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws3"))
-      wait_until { Cable.server.connections.size == 2 }
-      ws4 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws4"))
-      wait_until { Cable.server.connections.size == 3 }
-      _ws5 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws5"))
-      wait_until { Cable.server.connections.size == 4 }
 
-      connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws2")).should be_true
-      connections.any?(&.starts_with?("ws3")).should be_true
-      connections.any?(&.starts_with?("ws4")).should be_true
-      connections.any?(&.starts_with?("ws5")).should be_true
+      # More raising connections than `restart_error_allowance` (2 in these
+      # specs), each in its own room so no broadcast crosses between them.
+      %w[ws2 ws3 ws4].each_with_index do |token, index|
+        room = (index + 2).to_s
+        ws = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers(token))
+        wait_until { Cable.server.active_connections_for(token).size == 1 }
 
-      # Each connection streams from its OWN room. With a shared room the "test"
-      # echo of one connection could be delivered late — after the "raise" tore
-      # its socket down — to the *next* connection that had meanwhile subscribed
-      # to the same room, so a connection would sometimes receive a message with
-      # a different `current_user`. Isolating rooms makes a broadcast reach only
-      # the connection that produced it, so each block is deterministic.
-      messages = [
-        {type: "welcome"}.to_json,
-        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "2"}.to_json}.to_json,
-        {identifier: {channel: "ChatChannel", room: "2"}.to_json, message: {message: "test", current_user: "ws2"}}.to_json,
-      ]
-      seq = 0
-      ping_seq = 0
-      ws2.on_message do |str|
-        if str.match(/\{"type":"ping","message":[0-9]{8,12}\}/) && ping_seq < 2
-          ping_seq += 1
-          next
+        ws.on_message do |str|
+          next unless str.includes?("confirm_subscription")
+
+          ws.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: room}.to_json, "data" => {message: "raise"}.to_json}.to_json)
         end
-        str.should eq(messages[seq])
-        seq += 1
-        ws2.close if seq >= messages.size
-      end
-      # subscribe
-      ws2.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "2"}.to_json}.to_json)
+        ws.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: room}.to_json}.to_json)
 
-      wait_for_subscription("ws2")
-
-      # send message
-      ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "2"}.to_json, "data" => {message: "test"}.to_json}.to_json)
-      # raise error
-      ws2.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "2"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
-
-      ws2.run
-
-      # 1 error, and ws2 disconnected — both happen asynchronously after the
-      # raise, so wait for the state instead of asserting immediately.
-      wait_until { Cable.server.errors == 1 && Cable.server.connections.size == 3 }
-      Cable.server.errors.should eq(1)
-      Cable.server.connections.size.should eq(3)
-      connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws2")).should be_false
-
-      messages = [
-        {type: "welcome"}.to_json,
-        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "3"}.to_json}.to_json,
-        {identifier: {channel: "ChatChannel", room: "3"}.to_json, message: {message: "test", current_user: "ws3"}}.to_json,
-      ]
-      seq = 0
-      ping_seq = 0
-      ws3.on_message do |str|
-        if str.match(/\{"type":"ping","message":[0-9]{8,12}\}/) && ping_seq < 2
-          ping_seq += 1
-          next
+        begin
+          ws.run
+        rescue IO::Error
+          # the server closes this socket after the raise
         end
-        str.should eq(messages[seq])
-        seq += 1
-        ws3.close if seq >= messages.size
+
+        wait_until { Cable.server.active_connections_for(token).empty? }.should be_true
       end
-      # subscribe
-      ws3.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "3"}.to_json}.to_json)
 
-      wait_for_subscription("ws3")
-
-      # send message
-      ws3.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "3"}.to_json, "data" => {message: "test"}.to_json}.to_json)
-      # raise error
-      ws3.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "3"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
-
-      ws3.run
-
-      # 2 errors, and ws3 disconnected
-      wait_until { Cable.server.errors == 2 && Cable.server.connections.size == 2 }
-      Cable.server.errors.should eq(2)
-      Cable.server.connections.size.should eq(2)
-      connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws3")).should be_false
-
-      messages = [
-        {type: "welcome"}.to_json,
-        {type: "confirm_subscription", identifier: {channel: "ChatChannel", room: "4"}.to_json}.to_json,
-        {identifier: {channel: "ChatChannel", room: "4"}.to_json, message: {message: "test", current_user: "ws4"}}.to_json,
-      ]
-      seq = 0
-      ping_seq = 0
-      ws4.on_message do |str|
-        if str.match(/\{"type":"ping","message":[0-9]{8,12}\}/) && ping_seq < 2
-          ping_seq += 1
-          next
-        end
-        str.should eq(messages[seq])
-        seq += 1
-        ws4.close if seq >= messages.size
-      end
-      # subscribe
-      ws4.send({"command" => "subscribe", "identifier" => {channel: "ChatChannel", room: "4"}.to_json}.to_json)
-
-      wait_for_subscription("ws4")
-
-      # send message
-      ws4.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "4"}.to_json, "data" => {message: "test"}.to_json}.to_json)
-      # raise error
-      ws4.send({"command" => "message", "identifier" => {channel: "ChatChannel", room: "4"}.to_json, "data" => {message: "raise"}.to_json}.to_json)
-
-      ws4.run
-
-      # the volume of errors trips the restart: wait for it to reset instead of
-      # guessing with a fixed sleep
-      wait_until { Cable.server.errors == 0 && Cable.server.connections.empty? }
-
-      # we should have 1 connectoon ws5 open
-      # but since the server restarted due to volume of errors
-      # all connections will be closed
-      # errors will be reset
+      # the raising connections are gone and reported, the rest of the node is untouched
+      Cable.server.should be(server)
       Cable.server.errors.should eq(0)
-      Cable.server.connections.size.should eq(0)
+      Cable.server.active_connections_for("bystander").size.should eq(1)
+      FakeExceptionService.exceptions.count(&.exception.is_a?(IO::Error)).should eq(3)
+
+      bystander.close
     end
   end
 end

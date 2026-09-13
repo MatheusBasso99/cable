@@ -37,6 +37,8 @@ module Cable
     setting url : String = ENV["CABLE_BACKEND_URL"], example: "redis://localhost:6379"
     setting backend_class : Cable::BackendCore.class = Cable::BackendRegistry, example: "Cable::RedisBackend"
     setting backend_ping_interval : Time::Span = 15.seconds
+    # Backend pinger failures tolerated before `Cable.restart`. Exceptions raised
+    # while handling a client's message close that client's socket and do not count.
     setting restart_error_allowance : Int32 = 20
     # ameba:disable Lint/UnusedArgument
     setting on_error : Proc(Exception, String, Cable::Connection?, Nil) = ->(exception : Exception, message : String, connection : Cable::Connection?) do
