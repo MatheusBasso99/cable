@@ -1,13 +1,16 @@
 If you are using Rails, then you already has a `app/assets/javascripts/cable.js` file that requires `action_cable`,
-you just need to connect to the right URL (don't forgot the settings you used), to authenticate using JWT use something like:
+you just need to connect to the right URL (don't forgot the settings you used). To authenticate using JWT, keep the
+token out of the URL and offer it as a subprotocol entry with `addSubProtocol` (ActionCable 7.1 or newer), before
+any subscription opens the connection:
 
   ```js
   (function() {
     this.App || (this.App = {});
 
     App.cable = ActionCable.createConsumer(
-    "ws://localhost:5000/cable?token=JWT_TOKEN" // if using the default options
+    "ws://localhost:5000/cable" // if using the default options
     );
+    App.cable.addSubProtocol("cable-token." + JWT_TOKEN); // settings.token_subprotocol_prefix
   }.call(this));
   ```
 

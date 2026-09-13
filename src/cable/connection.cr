@@ -30,7 +30,7 @@ module Cable
     end
 
     def initialize(request : HTTP::Request, @socket : HTTP::WebSocket)
-      @token = request.query_params.fetch(Cable.settings.token, nil)
+      @token = Cable::Subprotocols.token(request)
 
       begin
         connect

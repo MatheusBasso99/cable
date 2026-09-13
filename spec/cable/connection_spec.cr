@@ -3,6 +3,59 @@ require "../spec_helper"
 include RequestHelpers
 
 describe Cable::Connection do
+  describe "#token" do
+    it "is the remainder of the credential entry" do
+      token_offering("actioncable-v1-json, test-token.1").should eq("1")
+    end
+
+    it "is the same when the entries come on repeated header lines" do
+      token_offering("actioncable-v1-json", "test-token.1").should eq("1")
+    end
+
+    it "is read when actioncable-v1-json is not offered" do
+      token_offering("test-token.1").should eq("1")
+    end
+
+    it "is nil when no subprotocol is offered" do
+      token_offering.should be_nil
+    end
+
+    it "is nil when no entry carries a credential" do
+      token_offering("actioncable-v1-json, actioncable-unsupported").should be_nil
+    end
+
+    it "is never read from the query string" do
+      request = HTTP::Request.new("GET", "#{Cable.settings.route}?test_token=1&token=1", upgrade_headers("actioncable-v1-json"))
+      token_for(request).should be_nil
+    end
+
+    it "is nil when the entry is exactly the prefix" do
+      token_offering("actioncable-v1-json, test-token.").should be_nil
+      # the first credential entry decides; a later one is not looked for
+      token_offering("actioncable-v1-json, test-token., test-token.1").should be_nil
+    end
+
+    it "comes from the first credential entry" do
+      token_offering("actioncable-v1-json, test-token.1, test-token.2").should eq("1")
+      token_offering("test-token.1", "test-token.2").should eq("1")
+    end
+
+    it "ignores whitespace and empty entries" do
+      token_offering(" actioncable-v1-json ,, \ttest-token.1  ").should eq("1")
+    end
+
+    it "compares the prefix case-sensitively" do
+      token_offering("actioncable-v1-json, Test-Token.1").should be_nil
+    end
+
+    it "honours token_subprotocol_prefix" do
+      Cable.temp_config(token_subprotocol_prefix: "x.") do
+        token_offering("actioncable-v1-json, x.1").should eq("1")
+        token_offering("actioncable-v1-json, test-token.1").should be_nil
+      end
+    end
+  end
+
   describe "#close" do
     it "closes the connection socket even without channel subscriptions" do
       connect do |connection, _socket|
@@ -620,4 +673,15 @@ def connect(connection_class : Cable::Connection.class = ConnectionTest, token :
   yield connection, socket
 
   connection.close
+end
+
+private def token_offering(*protocol_lines) : String?
+  token_for(HTTP::Request.new("GET", Cable.settings.route, upgrade_headers(*protocol_lines)))
+end
+
+private def token_for(request : HTTP::Request) : String?
+  connection = ConnectionTest.new(request, DummySocket.new(IO::Memory.new))
+  token = connection.token
+  connection.close
+  token
 end

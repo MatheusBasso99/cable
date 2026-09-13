@@ -5,7 +5,7 @@
 <title>Lucky Vanilla JS WebSocket Test</title>
 <script language="javascript" type="text/javascript">
   var token = 'xyz'
-  var wsUri = `ws://localhost:5000/cable?token=${token}`
+  var wsUri = 'ws://localhost:5000/cable'
   var output
 
   function init () {
@@ -14,7 +14,8 @@
   }
 
   function testWebSocket () {
-    websocket = new WebSocket(wsUri)
+    // the token rides in Sec-WebSocket-Protocol, next to the protocol the server answers with
+    websocket = new WebSocket(wsUri, ['actioncable-v1-json', 'cable-token.' + token])
     websocket.onopen = function (evt) {
       writeToScreen('CONNECTED')
       subscribe(evt)

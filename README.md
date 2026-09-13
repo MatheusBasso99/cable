@@ -36,6 +36,15 @@ Or if you don't want to use Redis, you can try one of these alternatives
 
 2. Run `shards install`
 
+## Upgrading from 0.4
+
+0.5 moves the connection credential out of the URL, which breaks existing setups:
+
+- Crystal 1.21 or newer is required.
+- `settings.token` and `settings.disable_sec_websocket_protocol_header` are gone, and a `config/cable.cr` that still sets either no longer compiles. Delete both lines.
+- `?token=` is no longer read; the query string never reaches `Cable::Connection#token`.
+- Move the credential to the subprotocol, next to `actioncable-v1-json`: see [How the client authenticates](#how-the-client-authenticates). Clients that offer no subprotocol no longer receive one they did not ask for, which is what the removed setting worked around.
+
 ## Usage
 
 Application code
@@ -86,7 +95,7 @@ After that, you can configure your `Cable server`. The defaults are:
 
 Cable.configure do |settings|
   settings.route = "/cable"    # the URL your JS Client will connect
-  settings.token = "token"     # The query string parameter used to get the token
+  settings.token_subprotocol_prefix = "cable-token."  # the Sec-WebSocket-Protocol entry that carries the credential
   settings.url = ENV.fetch("CABLE_BACKEND_URL", "redis://localhost:6379")
   settings.backend_class = Cable::RedisBackend
   settings.backend_ping_interval = 15.seconds
@@ -315,6 +324,25 @@ end
 
 Check below on the JavaScript section how to communicate with the Cable backend.
 
+### How the client authenticates
+
+Browsers cannot set headers on a WebSocket. The one header a page controls is `Sec-WebSocket-Protocol`, through `new WebSocket(url, protocols)`, so the credential travels as one offered subprotocol: `settings.token_subprotocol_prefix` (`cable-token.` by default) followed by the credential. Cable exposes the rest of the first such entry, as an opaque string, as `Cable::Connection#token`; what it means is up to your `connect`.
+
+- The client must **also** offer `actioncable-v1-json`. A server that names none of the offered protocols makes the browser fail the handshake.
+- The server echoes `actioncable-v1-json` only, and never the credential entry.
+- A client that offers no subprotocol at all is still accepted, with a `nil` token: it gets whatever your `connect` makes of that.
+
+```js
+// any client
+new WebSocket("wss://example.com/cable", ["actioncable-v1-json", "cable-token." + token]);
+
+// @rails/actioncable (7.1 or newer), which already offers actioncable-v1-json
+const consumer = createConsumer("wss://example.com/cable");
+consumer.addSubProtocol("cable-token." + token);
+```
+
+Why not `?token=`: a URL is part of the request line, which proxies, CDNs, load balancers and APM tools record by default, and headers are not. This reduces where the credential ends up; it does not hide it from the page's own JavaScript.
+
 ### JavaScript
 
 It works with [ActionCable](https://www.npmjs.com/package/actioncable) JS Client out-of-the-box!! Yeah, that's really cool no? If you need to adapt, make a hack, or something like that?!
@@ -328,16 +356,6 @@ No, you don't need it! Just read the few lines below and start playing with Cabl
 ### Vanilla JS Examples
 
 If you want to use this shard with iOS clients or vanilla JS using react etc., there is an example in the [examples](examples/) folder.
-
-> Note - If you are using a vanilla - non-action-cable JS client, you may want to disable the action cable response headers as they cause issues for clients who don't know how to handle them. Set a Habitat disable_sec_websocket_protocol_header like so to disable those headers;
-
-```crystal
-# config/cable.cr
-
-Cable.configure do |settings|
-  settings.disable_sec_websocket_protocol_header = true
-end
-```
 
 ## Debugging
 
