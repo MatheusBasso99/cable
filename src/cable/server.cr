@@ -40,6 +40,11 @@ module Cable
     @channel_mutex : Mutex
     @connections : Hash(String, Cable::Connection)
     @connections_mutex : Mutex
+    # How many open connections on this server hold `cable_internal/<identifier>`,
+    # keyed by identifier. Connections of the same user share one backend
+    # subscription, like streams do in `@channels`.
+    @internal_channel_holders = {} of String => Int32
+    @internal_channel_mutex = Mutex.new
 
     def initialize
       @channels = {} of String => Channels
@@ -108,6 +113,58 @@ module Cable
       end
 
       backend.subscribe(identifier)
+    end
+
+    # Subscribes the backend to the internal channel of `identifier` (see
+    # `RemoteConnections`) on behalf of one more connection. Only the first
+    # connection holding it reaches the backend.
+    def subscribe_internal_channel(identifier : String) : Nil
+      first = @internal_channel_mutex.synchronize do
+        holders = @internal_channel_holders.fetch(identifier, 0)
+        @internal_channel_holders[identifier] = holders + 1
+        holders.zero?
+      end
+      return unless first
+
+      # Outside the mutex: a backend may wait on the network here, and that
+      # must not hold up every other connection being opened or closed.
+      begin
+        backend.subscribe(internal_channel_for(identifier))
+      rescue e
+        @internal_channel_mutex.synchronize { release_internal_channel_holder(identifier) }
+        raise e
+      end
+    end
+
+    # Releases one connection's hold on the internal channel of `identifier`,
+    # and unsubscribes the backend when it was the last one. Releasing an
+    # identifier nobody holds does nothing.
+    def unsubscribe_internal_channel(identifier : String) : Nil
+      # The backend call stays inside the mutex, so it cannot land after the
+      # subscribe of a connection that opens while this one closes.
+      @internal_channel_mutex.synchronize do
+        if release_internal_channel_holder(identifier)
+          backend.unsubscribe(internal_channel_for(identifier))
+        end
+      end
+    end
+
+    # Drops one holder of `identifier` and returns whether it was the last.
+    # Call with `@internal_channel_mutex` held.
+    private def release_internal_channel_holder(identifier : String) : Bool
+      return false unless holders = @internal_channel_holders[identifier]?
+
+      if holders > 1
+        @internal_channel_holders[identifier] = holders - 1
+        false
+      else
+        @internal_channel_holders.delete(identifier)
+        true
+      end
+    end
+
+    private def internal_channel_for(identifier : String) : String
+      "cable_internal/#{identifier}"
     end
 
     def unsubscribe_channel(channel : Channel, identifier : String)
@@ -226,10 +283,11 @@ module Cable
       spawn(name: "Cable::Server - process_subscribed_messages") do
         while received = fiber_channel.receive
           channel, message = received
-          if channel.starts_with?("cable_internal")
-            identifier = channel.split('/').last
-            connection_identifier = server.find_connection_identifier(identifier)
-            server.send_to_internal_connections(connection_identifier, message) if connection_identifier
+          if channel.starts_with?("cable_internal/")
+            identifier = channel.lchop("cable_internal/")
+            server.find_connection_identifiers(identifier).each do |connection_identifier|
+              server.send_to_internal_connections(connection_identifier, message)
+            end
           else
             server.send_to_channels(channel, message)
           end
@@ -238,9 +296,15 @@ module Cable
       end
     end
 
-    protected def find_connection_identifier(identifier : String) : String?
+    # The `connection_identifier`s of every connection open on this server
+    # whose `identified_by` value is exactly `identifier`. Matching the
+    # `<identifier>-<uuid>` keys by prefix instead would let `user_1` reach
+    # `user_12`'s connections, and stop at the first of a user's tabs.
+    protected def find_connection_identifiers(identifier : String) : Array(String)
       @connections_mutex.synchronize do
-        @connections.keys.find(&.starts_with?(identifier))
+        @connections.compact_map do |connection_identifier, connection|
+          connection_identifier if connection.identifier == identifier
+        end
       end
     end
 

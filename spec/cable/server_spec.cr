@@ -18,6 +18,40 @@ describe Cable::Server do
     end
   end
 
+  describe "internal disconnect messages" do
+    it "close every connection of the identifier and no other" do
+      Cable.reset_server
+      Cable.temp_config(backend_class: Cable::DevBackend) do
+        first_tab = creates_new_connection("user_1")
+        second_tab = creates_new_connection("user_1")
+        other_user = creates_new_connection("user_12")
+        [first_tab, second_tab, other_user].each { |connection| Cable.server.add_connection(connection) }
+
+        Cable.server.fiber_channel.send({"cable_internal/user_1", Cable.message(:disconnect)})
+
+        wait_until { first_tab.closed? && second_tab.closed? }.should be_true
+        other_user.closed?.should be_false
+        Cable.server.connections.keys.should eq([other_user.connection_identifier])
+        other_user.close
+      end
+      Cable.reset_server
+    end
+
+    it "match identifiers that contain a slash" do
+      Cable.reset_server
+      Cable.temp_config(backend_class: Cable::DevBackend) do
+        connection = creates_new_connection("org/1")
+        Cable.server.add_connection(connection)
+
+        Cable.server.fiber_channel.send({"cable_internal/org/1", Cable.message(:disconnect)})
+
+        wait_until { connection.closed? }.should be_true
+        Cable.server.connections.should be_empty
+      end
+      Cable.reset_server
+    end
+  end
+
   describe "#active_connections_for" do
     it "accurately returns active connections for a specificic token" do
       Cable.reset_server
