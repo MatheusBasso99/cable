@@ -11,11 +11,9 @@ module Cable
       path = context.request.path
       Cable::Logger.info { "Started GET \"#{path}\" [WebSocket] for #{remote_address} at #{Time.utc}" }
 
-      unless Cable.settings.disable_sec_websocket_protocol_header
-        context.response.headers["Sec-WebSocket-Protocol"] = "actioncable-v1-json"
-      end
-
-      ws = HTTP::WebSocketHandler.new do |socket, ws_ctx|
+      # Answers `Sec-WebSocket-Protocol: actioncable-v1-json` only when the client offered it,
+      # and nothing otherwise; no other offered entry (the credential included) is ever echoed.
+      ws = HTTP::WebSocketHandler.new(Cable::INTERNAL[:protocols]) do |socket, ws_ctx|
         connection_id : String? = nil
         ws_pinger : Cable::WebsocketPinger? = nil
 
@@ -44,33 +42,31 @@ module Cable
         # the socket.on_close blocked is not called 100% of the time
         # so we need to do it manually
         socket.on_message do |message|
-          begin
-            connection.receive(message)
-          rescue e : KeyError | JSON::ParseException | JSON::SerializableError
-            # handle unknown/malformed messages
-            ws_pinger.stop
-            socket.close(HTTP::WebSocket::CloseCode::InvalidFramePayloadData, "Invalid message")
-            Cable.server.remove_connection(connection_id)
-            Cable.settings.on_error.call(e, "Cable::Handler#socket.on_message (frame of #{message.bytesize} bytes)", connection)
-          rescue e : Cable::Connection::UnauthorizedConnectionException
-            # handle unauthorized connections
-            # no need to log them
-            ws_pinger.stop
-            socket.close(HTTP::WebSocket::CloseCode::NormalClosure, "Farewell")
-            # most of the time, we will have already removed the connection
-            # since the connection is rejected before any messages are received
-            # but just in case, we will try remove it anyways
-            Cable.server.remove_connection(connection_id)
-          rescue e : Exception
-            # handle all other exceptions
-            ws_pinger.stop
-            socket.close(HTTP::WebSocket::CloseCode::InternalServerError, "Internal Server Error")
-            Cable.server.remove_connection(connection_id)
-            # handle restart
-            Cable.server.count_error!
-            Cable.restart if Cable.server.restart?
-            Cable.settings.on_error.call(e, "Cable::Handler#socket.on_message (frame of #{message.bytesize} bytes)", connection)
-          end
+          connection.receive(message)
+        rescue e : KeyError | JSON::ParseException | JSON::SerializableError
+          # handle unknown/malformed messages
+          ws_pinger.stop
+          socket.close(HTTP::WebSocket::CloseCode::InvalidFramePayloadData, "Invalid message")
+          Cable.server.remove_connection(connection_id)
+          Cable.settings.on_error.call(e, "Cable::Handler#socket.on_message (frame of #{message.bytesize} bytes)", connection)
+        rescue Cable::Connection::UnauthorizedConnectionException
+          # handle unauthorized connections
+          # no need to log them
+          ws_pinger.stop
+          socket.close(HTTP::WebSocket::CloseCode::NormalClosure, "Farewell")
+          # most of the time, we will have already removed the connection
+          # since the connection is rejected before any messages are received
+          # but just in case, we will try remove it anyways
+          Cable.server.remove_connection(connection_id)
+        rescue e : Exception
+          # handle all other exceptions
+          ws_pinger.stop
+          socket.close(HTTP::WebSocket::CloseCode::InternalServerError, "Internal Server Error")
+          Cable.server.remove_connection(connection_id)
+          # handle restart
+          Cable.server.count_error!
+          Cable.restart if Cable.server.restart?
+          Cable.settings.on_error.call(e, "Cable::Handler#socket.on_message (frame of #{message.bytesize} bytes)", connection)
         end
 
         socket.on_close do

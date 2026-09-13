@@ -7,7 +7,7 @@ require "./cable/**"
 
 # TODO: Write documentation for `Cable`
 module Cable
-  VERSION = "0.4.0"
+  VERSION = "0.5.0"
 
   INTERNAL = {
     message_types: {
@@ -26,14 +26,15 @@ module Cable
       remote:          "remote",
     },
     default_mount_path: "/cable",
-    protocols:          ["actioncable-v1-json", "actioncable-unsupported"],
+    # The subprotocols a handshake may be answered with. Only what Cable speaks belongs here:
+    # echoing `actioncable-unsupported` would tell a client its protocol was accepted.
+    protocols: ["actioncable-v1-json"],
   }
 
   Habitat.create do
     setting route : String = Cable.message(:default_mount_path), example: "/cable"
-    setting token : String = "token", example: "token"
+    setting token_subprotocol_prefix : String = "cable-token.", example: "cable-token."
     setting url : String = ENV["CABLE_BACKEND_URL"], example: "redis://localhost:6379"
-    setting disable_sec_websocket_protocol_header : Bool = false
     setting backend_class : Cable::BackendCore.class = Cable::BackendRegistry, example: "Cable::RedisBackend"
     setting backend_ping_interval : Time::Span = 15.seconds
     setting restart_error_allowance : Int32 = 20

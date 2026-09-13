@@ -1,30 +1,22 @@
 require "../spec_helper"
 
+include RequestHelpers
+
 describe Cable::Handler do
   describe "basic handling" do
     it "matches the right route" do
       handler = Cable::Handler(ApplicationCable::Connection).new
-      request = HTTP::Request.new("GET", "#{Cable.settings.route}?test_token=1", headers)
+      request = HTTP::Request.new("GET", Cable.settings.route, upgrade_headers("actioncable-v1-json, actioncable-unsupported"))
 
       io_with_context = create_ws_request_and_return_io_and_context(handler, request)[0]
-      io_with_context.to_s.should eq("HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Protocol: actioncable-v1-json\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: 6x90CSU0y750nc+5Do8J0YjG7lM=\r\n\r\n")
-    end
-
-    it "allows you to remove undesired actioncable headers" do
-      Cable.settings.disable_sec_websocket_protocol_header = true
-      handler = Cable::Handler(ApplicationCable::Connection).new
-      request = HTTP::Request.new("GET", "#{Cable.settings.route}?test_token=1", headers_without_sec_websocket_protocol)
-
-      io_with_context = create_ws_request_and_return_io_and_context(handler, request)[0]
-      io_with_context.to_s.should eq("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: 6x90CSU0y750nc+5Do8J0YjG7lM=\r\n\r\n")
-      Cable.settings.disable_sec_websocket_protocol_header = false
+      io_with_context.to_s.should eq(ACCEPTED_AS_ACTIONCABLE)
     end
 
     it "starts the web pinger" do
       Cable::WebsocketPinger.run_every(0.001) do
         address_chan = start_server
         listen_address = address_chan.receive
-        ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+        ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
         initialized = false
         ws2.on_message do |str|
@@ -42,12 +34,61 @@ describe Cable::Handler do
     end
   end
 
+  describe "Sec-WebSocket-Protocol" do
+    it "echoes actioncable-v1-json and never the credential entry" do
+      response = handshake_response(upgrade_headers("actioncable-v1-json, test-token.1"))
+      response.should eq(ACCEPTED_AS_ACTIONCABLE)
+      response.should_not contain("test-token")
+
+      ws, connection = live_connection(ws_headers("1"))
+      connection.token.should eq("1")
+      ws.close
+    end
+
+    it "sends no protocol when the client offers none, and still upgrades" do
+      handshake_response(upgrade_headers).should eq(ACCEPTED_WITHOUT_PROTOCOL)
+
+      ws, connection = live_connection(HTTP::Headers.new)
+      connection.token.should be_nil
+      first_message(ws).should eq({type: "welcome"}.to_json)
+    end
+
+    it "sends no protocol when the client offers entries but not actioncable-v1-json" do
+      handshake_response(upgrade_headers("test-token.1")).should eq(ACCEPTED_WITHOUT_PROTOCOL)
+      # a client offering only the protocol Cable cannot speak is not told it was accepted
+      handshake_response(upgrade_headers("actioncable-unsupported, test-token.1")).should eq(ACCEPTED_WITHOUT_PROTOCOL)
+
+      ws, connection = live_connection(HTTP::Headers{"Sec-WebSocket-Protocol" => "test-token.1"})
+      connection.token.should eq("1")
+      ws.close
+    end
+
+    it "treats repeated header lines like one comma-joined line" do
+      response = handshake_response(upgrade_headers("actioncable-v1-json", "test-token.1"))
+      response.should eq(handshake_response(upgrade_headers("actioncable-v1-json, test-token.1")))
+      response.should_not contain("test-token")
+
+      headers = HTTP::Headers.new
+      headers.add("Sec-WebSocket-Protocol", "actioncable-v1-json")
+      headers.add("Sec-WebSocket-Protocol", "test-token.1")
+      ws, connection = live_connection(headers)
+      connection.token.should eq("1")
+      first_message(ws).should eq({type: "welcome"}.to_json)
+    end
+
+    it "does not read the credential from the query string" do
+      ws, connection = live_connection(HTTP::Headers{"Sec-WebSocket-Protocol" => "actioncable-v1-json"}, "/updates?test_token=1&token=1")
+      connection.token.should be_nil
+      ws.close
+    end
+  end
+
   describe "subscribe to channel" do
     it "subscribes" do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       Cable.server.connections.size.should eq(1)
       Cable.server.active_connections_for("1").size.should eq(1)
@@ -79,7 +120,7 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       Cable.server.connections.size.should eq(1)
 
@@ -98,7 +139,7 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       Cable.server.connections.size.should eq(1)
 
@@ -119,7 +160,7 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       Cable.server.connections.size.should eq(1)
 
@@ -144,17 +185,30 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=reject")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("reject"))
 
       # we never get a connection from the server
       # its rejected before we get a chance to send a message
       Cable.server.connections.size.should eq(0)
+
+      messages = [] of String
+      close_code = nil
+      close_reason = nil
+      ws2.on_message { |str| messages << str }
+      ws2.on_close do |code, reason|
+        close_code = code
+        close_reason = reason
+      end
 
       # to avoid IO::Error from mock client connection failure
       begin
         ws2.run
       rescue
       end
+
+      close_code.should eq(HTTP::WebSocket::CloseCode::NormalClosure)
+      close_reason.should eq("Farewell")
+      messages.should be_empty
 
       # should be zero connections open
       Cable.server.connections.size.should eq(0)
@@ -166,7 +220,7 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       messages = [
         {type: "welcome"}.to_json,
@@ -203,7 +257,7 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       messages = [
         {type: "welcome"}.to_json,
@@ -235,7 +289,7 @@ describe Cable::Handler do
       address_chan = start_server
       listen_address = address_chan.receive
 
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=1")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("1"))
 
       messages = [
         {type: "welcome"}.to_json,
@@ -263,7 +317,7 @@ describe Cable::Handler do
   describe "the error handling" do
     it "doesn't match the wrong route" do
       handler = Cable::Handler(ApplicationCable::Connection).new
-      request = HTTP::Request.new("GET", "/unknown_route?test_token=1", headers)
+      request = HTTP::Request.new("GET", "/unknown_route", upgrade_headers("actioncable-v1-json, actioncable-unsupported"))
 
       io_with_context = create_ws_request_and_return_io_and_context(handler, request)[0]
       io_with_context.to_s.should contain("404 Not Found")
@@ -271,9 +325,9 @@ describe Cable::Handler do
 
     it "doesn't upgrade with wrong headers (without Upgrade header)" do
       handler = Cable::Handler(ApplicationCable::Connection).new
-      headers_without_upgrade = headers
+      headers_without_upgrade = upgrade_headers("actioncable-v1-json, actioncable-unsupported")
       headers_without_upgrade.delete("Upgrade")
-      request = HTTP::Request.new("GET", "/unknown_route?test_token=1", headers_without_upgrade)
+      request = HTTP::Request.new("GET", "/unknown_route", headers_without_upgrade)
 
       io_with_context = create_ws_request_and_return_io_and_context(handler, request)[0]
       io_with_context.to_s.should contain("404 Not Found")
@@ -281,9 +335,9 @@ describe Cable::Handler do
 
     it "doesn't upgrade with wrong headers (without Connection header)" do
       handler = Cable::Handler(ApplicationCable::Connection).new
-      headers_without_connection = headers
+      headers_without_connection = upgrade_headers("actioncable-v1-json, actioncable-unsupported")
       headers_without_connection.delete("Connection")
-      request = HTTP::Request.new("GET", "/unknown_route?test_token=1", headers_without_connection)
+      request = HTTP::Request.new("GET", "/unknown_route", headers_without_connection)
 
       io_with_context = create_ws_request_and_return_io_and_context(handler, request)[0]
       io_with_context.to_s.should contain("404 Not Found")
@@ -298,20 +352,20 @@ describe Cable::Handler do
 
       # connect
       Cable.server.connections.size.should eq(0)
-      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws2")
+      ws2 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws2"))
       wait_until { Cable.server.connections.size == 1 }
-      ws3 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws3")
+      ws3 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws3"))
       wait_until { Cable.server.connections.size == 2 }
-      ws4 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws4")
+      ws4 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws4"))
       wait_until { Cable.server.connections.size == 3 }
-      _ws5 = HTTP::WebSocket.new("ws://#{listen_address}/updates?test_token=ws5")
+      _ws5 = HTTP::WebSocket.new("ws://#{listen_address}/updates", headers: ws_headers("ws5"))
       wait_until { Cable.server.connections.size == 4 }
 
       connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws2")).should eq(true)
-      connections.any?(&.starts_with?("ws3")).should eq(true)
-      connections.any?(&.starts_with?("ws4")).should eq(true)
-      connections.any?(&.starts_with?("ws5")).should eq(true)
+      connections.any?(&.starts_with?("ws2")).should be_true
+      connections.any?(&.starts_with?("ws3")).should be_true
+      connections.any?(&.starts_with?("ws4")).should be_true
+      connections.any?(&.starts_with?("ws5")).should be_true
 
       # Each connection streams from its OWN room. With a shared room the "test"
       # echo of one connection could be delivered late — after the "raise" tore
@@ -353,7 +407,7 @@ describe Cable::Handler do
       Cable.server.errors.should eq(1)
       Cable.server.connections.size.should eq(3)
       connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws2")).should eq(false)
+      connections.any?(&.starts_with?("ws2")).should be_false
 
       messages = [
         {type: "welcome"}.to_json,
@@ -388,7 +442,7 @@ describe Cable::Handler do
       Cable.server.errors.should eq(2)
       Cable.server.connections.size.should eq(2)
       connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws3")).should eq(false)
+      connections.any?(&.starts_with?("ws3")).should be_false
 
       messages = [
         {type: "welcome"}.to_json,
@@ -460,21 +514,32 @@ private def start_server
   address_chan
 end
 
-private def headers
-  HTTP::Headers{
-    "Upgrade"                => "websocket",
-    "Connection"             => "Upgrade",
-    "Sec-WebSocket-Key"      => "OqColdEJm3i9e/EqMxnxZw==",
-    "Sec-WebSocket-Protocol" => "actioncable-v1-json, actioncable-unsupported",
-    "Sec-WebSocket-Version"  => "13",
-  }
+private ACCEPTED_AS_ACTIONCABLE   = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: 6x90CSU0y750nc+5Do8J0YjG7lM=\r\nSec-WebSocket-Protocol: actioncable-v1-json\r\n\r\n"
+private ACCEPTED_WITHOUT_PROTOCOL = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: 6x90CSU0y750nc+5Do8J0YjG7lM=\r\n\r\n"
+
+# The raw bytes of the handshake reply. Crystal's `HTTP::WebSocket` client does not check the
+# server's `Sec-WebSocket-Protocol`, so the reply is only ever asserted here.
+private def handshake_response(headers : HTTP::Headers) : String
+  handler = Cable::Handler(ApplicationCable::Connection).new
+  request = HTTP::Request.new("GET", Cable.settings.route, headers)
+  create_ws_request_and_return_io_and_context(handler, request)[0].to_s
 end
 
-private def headers_without_sec_websocket_protocol
-  HTTP::Headers{
-    "Upgrade"               => "websocket",
-    "Connection"            => "Upgrade",
-    "Sec-WebSocket-Key"     => "OqColdEJm3i9e/EqMxnxZw==",
-    "Sec-WebSocket-Version" => "13",
-  }
+# Connects a live client that sends `headers`, and returns it with the connection the server
+# built for it.
+private def live_connection(headers : HTTP::Headers, path : String = "/updates") : {HTTP::WebSocket, Cable::Connection}
+  listen_address = start_server.receive
+  ws = HTTP::WebSocket.new("ws://#{listen_address}#{path}", headers: headers)
+  wait_until { Cable.server.connections.size == 1 }
+  {ws, Cable.server.connections.values.first}
+end
+
+private def first_message(ws : HTTP::WebSocket) : String?
+  message = nil
+  ws.on_message do |str|
+    message = str
+    ws.close
+  end
+  ws.run
+  message
 end

@@ -16,7 +16,7 @@ jobs:
         shard_file:
           - shard.yml
         crystal_version:
-          - 1.10.0
+          - 1.21.0
           - latest
         experimental:
           - false
@@ -49,6 +49,8 @@ jobs:
       - name: Format
         run: crystal tool format --check
       - name: Lint
-        run: ./bin/ameba
+        run: |
+          crystal build -o bin/ameba lib/ameba/bin/ameba.cr
+          ./bin/ameba
       - name: Run tests
         run: crystal spec

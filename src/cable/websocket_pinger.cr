@@ -14,7 +14,7 @@ module Cable
     end
 
     def self.build(socket : HTTP::WebSocket)
-      self.new(socket)
+      new(socket)
     end
 
     def self.seconds
