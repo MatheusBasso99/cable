@@ -308,10 +308,10 @@ describe Cable::Handler do
       wait_until { Cable.server.connections.size == 4 }
 
       connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws2")).should eq(true)
-      connections.any?(&.starts_with?("ws3")).should eq(true)
-      connections.any?(&.starts_with?("ws4")).should eq(true)
-      connections.any?(&.starts_with?("ws5")).should eq(true)
+      connections.any?(&.starts_with?("ws2")).should be_true
+      connections.any?(&.starts_with?("ws3")).should be_true
+      connections.any?(&.starts_with?("ws4")).should be_true
+      connections.any?(&.starts_with?("ws5")).should be_true
 
       # Each connection streams from its OWN room. With a shared room the "test"
       # echo of one connection could be delivered late — after the "raise" tore
@@ -353,7 +353,7 @@ describe Cable::Handler do
       Cable.server.errors.should eq(1)
       Cable.server.connections.size.should eq(3)
       connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws2")).should eq(false)
+      connections.any?(&.starts_with?("ws2")).should be_false
 
       messages = [
         {type: "welcome"}.to_json,
@@ -388,7 +388,7 @@ describe Cable::Handler do
       Cable.server.errors.should eq(2)
       Cable.server.connections.size.should eq(2)
       connections = Cable.server.connections.keys
-      connections.any?(&.starts_with?("ws3")).should eq(false)
+      connections.any?(&.starts_with?("ws3")).should be_false
 
       messages = [
         {type: "welcome"}.to_json,

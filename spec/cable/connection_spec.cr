@@ -6,9 +6,9 @@ describe Cable::Connection do
   describe "#close" do
     it "closes the connection socket even without channel subscriptions" do
       connect do |connection, _socket|
-        connection.closed?.should eq(false)
+        connection.closed?.should be_false
         connection.close
-        connection.closed?.should eq(true)
+        connection.closed?.should be_true
       end
     end
     it "removes the connection channel on close" do

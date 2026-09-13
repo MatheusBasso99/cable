@@ -18,15 +18,15 @@ module Cable
     end
 
     macro identified_by(name)
-      property {{name.id}} = ""
+      property {{ name.id }} = ""
 
       private def internal_identifier
-        @{{name.id}}
+        @{{ name.id }}
       end
     end
 
     macro owned_by(type_definition)
-      property {{type_definition.var}} : {{type_definition.type}}?
+      property {{ type_definition.var }} : {{ type_definition.type }}?
     end
 
     def initialize(request : HTTP::Request, @socket : HTTP::WebSocket)
@@ -37,7 +37,7 @@ module Cable
         # gather connection_identifier after the connection has gathered the id from identified_by(field)
         self.connection_identifier = "#{internal_identifier}-#{UUID.random}"
         subscribe_to_internal_channel
-      rescue e : UnauthorizedConnectionException
+      rescue UnauthorizedConnectionException
         reject_connection!
         unsubscribe_from_internal_channel
         socket.close(HTTP::WebSocket::CloseCode::NormalClosure, "Farewell")
@@ -86,8 +86,6 @@ module Cable
           channels_copy = CHANNELS[connection_identifier].dup
           CHANNELS.delete(connection_identifier)
           channels_copy
-        else
-          nil
         end
       end
 
@@ -132,7 +130,7 @@ module Cable
 
       return subscribe(payload) if payload.command == "subscribe"
       return unsubscribe(payload) if payload.command == "unsubscribe"
-      return message(payload) if payload.command == "message"
+      message(payload) if payload.command == "message"
     end
 
     def subscribe(payload : Cable::Payload)
