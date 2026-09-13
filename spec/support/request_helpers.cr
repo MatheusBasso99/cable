@@ -3,6 +3,7 @@ module RequestHelpers
   # argument. No argument gives a client that offers no subprotocol at all.
   def upgrade_headers(*protocol_lines) : HTTP::Headers
     headers = HTTP::Headers{
+      "Host"                  => "localhost",
       "Upgrade"               => "websocket",
       "Connection"            => "Upgrade",
       "Sec-WebSocket-Key"     => "OqColdEJm3i9e/EqMxnxZw==",
