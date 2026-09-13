@@ -5,6 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: "*"
+  workflow_dispatch:
 
 jobs:
   specs:
@@ -50,6 +51,7 @@ jobs:
         run: crystal tool format --check
       - name: Lint
         run: |
+          mkdir -p bin
           crystal build -o bin/ameba lib/ameba/bin/ameba.cr
           ./bin/ameba
       - name: Run tests
