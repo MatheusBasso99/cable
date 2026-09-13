@@ -283,10 +283,11 @@ module Cable
       spawn(name: "Cable::Server - process_subscribed_messages") do
         while received = fiber_channel.receive
           channel, message = received
-          if channel.starts_with?("cable_internal")
-            identifier = channel.split('/').last
-            connection_identifier = server.find_connection_identifier(identifier)
-            server.send_to_internal_connections(connection_identifier, message) if connection_identifier
+          if channel.starts_with?("cable_internal/")
+            identifier = channel.lchop("cable_internal/")
+            server.find_connection_identifiers(identifier).each do |connection_identifier|
+              server.send_to_internal_connections(connection_identifier, message)
+            end
           else
             server.send_to_channels(channel, message)
           end
@@ -295,9 +296,15 @@ module Cable
       end
     end
 
-    protected def find_connection_identifier(identifier : String) : String?
+    # The `connection_identifier`s of every connection open on this server
+    # whose `identified_by` value is exactly `identifier`. Matching the
+    # `<identifier>-<uuid>` keys by prefix instead would let `user_1` reach
+    # `user_12`'s connections, and stop at the first of a user's tabs.
+    protected def find_connection_identifiers(identifier : String) : Array(String)
       @connections_mutex.synchronize do
-        @connections.keys.find(&.starts_with?(identifier))
+        @connections.compact_map do |connection_identifier, connection|
+          connection_identifier if connection.identifier == identifier
+        end
       end
     end
 
